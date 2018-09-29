@@ -7,24 +7,45 @@
 #include "esp_system.h"
 #include "nvs_flash.h"
 #include "nvs.h"
-#define DefaultPass "Budweiser and titties"
-void app_main(){
-  if(sodium_init() < 0){
+#define DefaultPass "Password"
+
+void app_main()
+{
+  char str_p[20];
+  char password[20];  //value will be stored somewhere, we will change this later
+  char hash_pass[crypto_pwhash_STRBYTES];
+  int attempts = 0;
+
+  //Initialize sodium
+  if(sodium_init() < 0)
+  {
     printf("Sodium could not be loaded");
     esp_restart();
   }
 
-  char[20] str_p;
-  char[20] password;  //value will be stored somewhere, we will change this later
-  int attempts = 0;
-  printf("Enter Default Password")
-  scanf("%s",str_p);
-  if (crypto_pwhash_str(hashed_password, PASSWORD, strlen(PASSWORD),
+  // Initialize NVS
+  esp_err_t err = nvs_flash_init();
+  if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND)
+  {
+      // NVS partition was truncated and needs to be erased
+      // Retry nvs_flash_init
+      ESP_ERROR_CHECK(nvs_flash_erase());
+      err = nvs_flash_init();
+  }
+  ESP_ERROR_CHECK( err );
+
+
+  printf("Enter Default Password");
+  gets(str_p);
+  if (crypto_pwhash_str(hash_pass, DefaultPass, strlen(DefaultPass),
       crypto_pwhash_OPSLIMIT_SENSITIVE, crypto_pwhash_MEMLIMIT_SENSITIVE) != 0) {
-    prinf("Out of memory");
+    printf("Out of memory");
     esp_restart();
   }
-    while(attempts<3)
+  printf("%s",hash_pass); //testing, take out
+  getchar();
+  getchar();
+    /*while(attempts<3)
     {
       printf("Enter Password");
       scanf("%s",str_p);
@@ -46,6 +67,12 @@ void app_main(){
       //go into functions
     }
 
+    #NTP STUFF
+    #access it in esp/esp-idf/examples/protocols/sntp/main
+    static void obtain_time(void);
+    static void initialize_sntp(void);
+    static void initialise_wifi(void);
 
-  return 0;
+
+  */
 }
