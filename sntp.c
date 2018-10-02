@@ -1,51 +1,149 @@
+#include <string.h>
 #include <time.h>
-#include <apps/sntp/sntp.h>
-#include <lwip/sockets.h>
 #include <sys/time.h>
-#include <sdkconfig.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/event_groups.h"
+#include "esp_system.h"
+#include "esp_wifi.h"
+#include "esp_event_loop.h"
+#include "esp_log.h"
+#include "esp_attr.h"
+#include "esp_sleep.h"
+#include "nvs_flash.h"
 
-static char tag[]="time_tests";
+#include "lwip/err.h"
+#include "lwip/apps/sntp.h"
 
-void startSNTP()
+/* The examples use simple WiFi configuration that you can set via
+   'make menuconfig'.
+
+   If you'd rather not, just change the below entries to strings with
+   the config you want - ie #define EXAMPLE_WIFI_SSID "mywifissid"
+*/
+#define EXAMPLE_WIFI_SSID "AndroidAP"
+#define EXAMPLE_WIFI_PASS "yepd3338"
+
+/* FreeRTOS event group to signal when we are connected & ready to make a request */
+static EventGroupHandle_t wifi_event_group;
+
+/* The event group allows multiple bits for each event,
+   but we only care about one event - are we connected
+   to the AP with an IP? */
+const int CONNECTED_BIT = BIT0;
+
+static const char *TAG = "example";
+
+/* Variable holding number of times ESP32 restarted since first boot.
+ * It is placed into RTC memory using RTC_DATA_ATTR and
+ * maintains its value when ESP32 wakes from deep sleep.
+ */
+RTC_DATA_ATTR static int boot_count = 0;
+
+static void obtain_time(void);
+static void initialize_sntp(void);
+static void initialise_wifi(void);
+static esp_err_t event_handler(void *ctx, system_event_t *event);
+
+
+void app_main()
 {
-  ESP_LOGD(tag, "Starting SNTP");
-  ip_addr_t addr;
-  sntp_setoperatingmode(SNTP_OPMODE_POLL);
-  inet_pton(AF_INETm "129.6.15.28", &addr);
-  sntp_setserver(0,&addr);
-  sntp_init();
+    ++boot_count;
+    ESP_LOGI(TAG, "Boot count: %d", boot_count);
+
+    time_t now;
+    struct tm timeinfo;
+    time(&now);
+    localtime_r(&now, &timeinfo);
+    // Is time set? If not, tm_year will be (1970 - 1900).
+    if (timeinfo.tm_year < (2016 - 1900)) {
+        ESP_LOGI(TAG, "Time is not set yet. Connecting to WiFi and getting time over NTP.");
+        obtain_time();
+        // update 'now' variable with current time
+        time(&now);
+    }
+    char strftime_buf[64];
+
+    // Set timezone to Eastern Standard Time and print local time
+    setenv("TZ", "EST5EDT,M3.2.0/2,M11.1.0", 1);
+    tzset();
+    localtime_r(&now, &timeinfo);
+    strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
+    ESP_LOGI(TAG, "The current date/time in Indiana is: %s", strftime_buf);
+
+    const int deep_sleep_sec = 10;
+    ESP_LOGI(TAG, "Entering deep sleep for %d seconds", deep_sleep_sec);
+    esp_deep_sleep(1000000LL * deep_sleep_sec);
 }
 
-void task_time_tests(void *ignore)
+static void obtain_time(void)
 {
-  ESP_LOGD(tag, ">>task_time_tests");
-  struct timeval tv;
-  time_t time1;
-  struct tm tm1;
+    ESP_ERROR_CHECK( nvs_flash_init() );
+    initialise_wifi();
+    xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT,
+                        false, true, portMAX_DELAY);
+    initialize_sntp();
 
-  setenv("TZ","CST+7", 1);
-  tzset();
-  startSNTP();
+    // wait for time to be set
+    time_t now = 0;
+    struct tm timeinfo = { 0 };
+    int retry = 0;
+    const int retry_count = 10;
+    while(timeinfo.tm_year < (2016 - 1900) && ++retry < retry_count) {
+        ESP_LOGI(TAG, "Waiting for system time to be set... (%d/%d)", retry, retry_count);
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        time(&now);
+        localtime_r(&now, &timeinfo);
+    }
 
-  char buf1[30];
-  char buf2[30];
+    ESP_ERROR_CHECK( esp_wifi_stop() );
+}
 
-  while(1)
-  {
-    TickType_t startTime= xTaskGetTickCount();
-    gettimeofday(&tv, NULL);
-    ESP_LOGD(tag, "gettimeofday() = timeval.tv_Sec=%ld, timeval.tv_usec=%ld", tv.tv_sec, tv.tv_usec);
-    time(&time1);
-    ESP_LOGD(tag,"time()      =%ld, ctime()=%.24s, asctime()=%.24s", time1, ctime_r(&time1,buf1), asctime_r(gmtime(&time1), buf2));
-    gmtime_r(&time1, &tm1);
-    ESP_LOGD(tag, "gmtime()     =tm_year:%d, tm_mon: %d, tm_mday: %d, tm_hour: %d, tm_min: %d, tm_sec: %d", tm1.tm_year, tm1.tm_mon, tm1.tm_mday, tm1.tm_hour, tm1.tm_min, tm1.tm_sec);
-    ESP_LOGD(tag,"asctime()     =%.24s", asctime_r(&tm1, buf2));
-    localtime_r(&time1, $tm1);
-    ESP_LOGD(tag, "localtime()    =tm_year:%d, tm_mon: %d, tm_mday: %d, tm_hour: %d, tm_min: %d, tm_sec: %d", tm1.tm_year, tm1.tm_mon, tm1.tm_mday, tm1.tm_hour, tm1.tm_min, tm1.tm_sec);
+static void initialize_sntp(void)
+{
+    ESP_LOGI(TAG, "Initializing SNTP");
+    sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    sntp_setservername(0, "pool.ntp.org");
+    sntp_init();
+}
 
-    ESP_LOGD(tag, "---");
-    vTaskDelayUntil(&startTime, 1000/portTICK_PERIOD_MS);
-  }
-  vTaskDelete(NULL);
+static void initialise_wifi(void)
+{
+    tcpip_adapter_init();
+    wifi_event_group = xEventGroupCreate();
+    ESP_ERROR_CHECK( esp_event_loop_init(event_handler, NULL) );
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK( esp_wifi_init(&cfg) );
+    ESP_ERROR_CHECK( esp_wifi_set_storage(WIFI_STORAGE_RAM) );
+    wifi_config_t wifi_config = {
+        .sta = {
+            .ssid = EXAMPLE_WIFI_SSID,
+            .password = EXAMPLE_WIFI_PASS,
+        },
+    };
+    ESP_LOGI(TAG, "Setting WiFi configuration SSID %s...", wifi_config.sta.ssid);
+    ESP_ERROR_CHECK( esp_wifi_set_mode(WIFI_MODE_STA) );
+    ESP_ERROR_CHECK( esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config) );
+    ESP_ERROR_CHECK( esp_wifi_start() );
+}
 
+static esp_err_t event_handler(void *ctx, system_event_t *event)
+{
+    switch(event->event_id) {
+    case SYSTEM_EVENT_STA_START:
+        esp_wifi_connect();
+        break;
+    case SYSTEM_EVENT_STA_GOT_IP:
+        xEventGroupSetBits(wifi_event_group, CONNECTED_BIT);
+        break;
+    case SYSTEM_EVENT_STA_DISCONNECTED:
+        /* This is a workaround as ESP32 WiFi libs don't currently
+           auto-reassociate. */
+        esp_wifi_connect();
+        xEventGroupClearBits(wifi_event_group, CONNECTED_BIT);
+        break;
+    default:
+        break;
+    }
+    return ESP_OK;
 }
