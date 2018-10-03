@@ -28,6 +28,7 @@
 
 void app_main()
 {
+  int n = 0;
   char str_p[20]; //input str for password hashing
   char hash_pass[crypto_pwhash_STRBYTES];
   //int attempts = 0; //implement multiple tries later
@@ -124,15 +125,21 @@ void app_main()
 
   if (foundflag == 1)  //found the key in system
   {
-    //asked for user to input password above
-    //fgets(str_p, 20, stdin);  //TAKE INPUT SOMEHOW?????!?!?!?
-    strcpy(str_p, "password"); //Delete later
-    printf("%s", hash_pass);
-    if (crypto_pwhash_str_verify(hash_pass, str_p, strlen(str_p)) != 0) //Add attempts loop?
-    {
-      printf("%s", hash_pass);
-      printf("\nWrong password!\n");
-      return; /* wrong password */
+    for(n=0;n<3;n++){  
+    	//asked for user to input password above
+    	//fgets(str_p, 20, stdin);  //TAKE INPUT SOMEHOW?????!?!?!?
+    	strcpy(str_p, "password"); //Delete later
+    	printf("%s", hash_pass);
+    	if (crypto_pwhash_str_verify(hash_pass, str_p, strlen(str_p)) != 0) //Add attempts loop?
+    	{
+      	  printf("%s", hash_pass);
+      	  printf("\nWrong password!\n");
+      	  return; /* wrong password */
+        }
+	else
+	{
+	  break;
+	}
     }
   }
   printf("ran through");
